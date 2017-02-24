@@ -1,0 +1,2 @@
+set_combine_basicblock 1 
+set_resource_constraint mem_dual_port 2
