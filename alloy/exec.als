@@ -12,6 +12,8 @@ sig Exec {
   cd : E -> E, // control dependency
   sthd : E -> E, // same thread (E.R.)
   sloc : E -> E, // same location (partial E.R.)
+  site : E -> E, // same loop iteration (partial E.R.)
+  nite : E -> E, // next loop iteration (total order on site-classes)
   //////////////////////////////////////
   rf : E -> E,  // reads-from
   co : E -> E,  // coherence order
@@ -67,6 +69,23 @@ sig Exec {
     
   // loc is an equivalence relation among reads and writes
   is_equivalence[sloc, R + W]
+
+  // site is an equivalence relation among non-initial events
+  is_equivalence[site, ev - I]
+
+  // no two events in the same loop iteration
+  // are ordered by the next-iteration relation
+  no (site & nite)
+
+  // any two events in different loop iterations
+  // will be ordered (one way or the other) by the next-iteration relation
+  sq[ev] - site = nite + ~nite
+
+  // the next-iteration relation agrees with the program order
+  nite in sb
+
+  // the next-iteration relation is a strict partial order
+  strict_partial_order[nite]
 
   // naL contains zero or more sloc-classes
   naL . sloc = naL

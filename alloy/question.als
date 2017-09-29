@@ -1,8 +1,9 @@
-open c11[E] as M1
-open util/ordering[E] as ord
+open c11[E] as M1             // the C11 memory model
+open util/ordering[E] as ord  // library for building orders
 
 sig E {}
 
+// well-formed schedule
 pred wf_schedule [X : Exec_C] {
 
   // Construct co by projecting all the writes to the same atomic location
@@ -31,9 +32,14 @@ pred wf_schedule [X : Exec_C] {
 // constraints already imposed by LegUp scheduler
 pred allowed_schedule_orig [X : Exec_C] {
 
-  // preserve all RAW, WAR, and WAW dependencies
+  // preserve all RAW, WAR, and WAW dependencies within a loop iteration
   all e1, e2 : E | 
-  (e1 -> e2) in X.(sb & sloc) - (X.R -> X.R) 
+  (e1 -> e2) in X.(sb & sloc & site) - (X.R -> X.R) 
+  => ord/lte[e1,e2]
+
+  // preserve WAR dependencies from one iteration to the next
+  all e1, e2 : E | 
+  (e1 -> e2) in X.(sb & sloc & nite) & (X.W -> X.R) 
   => ord/lte[e1,e2]
 
   // preserve control, address, and data dependencies
@@ -46,6 +52,11 @@ pred allowed_schedule_orig [X : Exec_C] {
 pred allowed_schedule [X : Exec_C] {
 
   allowed_schedule_orig[X]
+
+  // preserve all RAW, WAR, and WAW dependencies from one iteration to the next
+  all e1, e2 : E | 
+  (e1 -> e2) in X.(sb & sloc & nite) - (X.R -> X.R) 
+  => ord/lte[e1,e2]
 
   // preserve the order between atomics on the same location
   all e1, e2 : E | 
@@ -67,7 +78,7 @@ pred allowed_schedule [X : Exec_C] {
   // cannot be switched with earlier reads/writes
   all e1, e2 : E | (
     e2 in X.((rel + sc) & (R + W)) and
-    e1 in X.(R + W) and (e1 -> e2) in X.sb    
+    e1 in X.(R+W) and (e1 -> e2) in X.sb       // (try changing R+W to W)
   ) => ord/lte[e1,e2]
 
   // a read cannot be switched with a later read/write if they are
@@ -95,84 +106,72 @@ pred allowed_schedule [X : Exec_C] {
   ) => ord/lte[e1,e3]  
 }
 
-pred p [X : Exec_C] {
-
+pred is_inconsistent[X:Exec_C] {
   // We do not consider RMWs yet
   no_RMWs[X]
 
   // Assume sb is total within each thread
   total_sb[X]
 
-  // The execution is dead and forbidden in software ...
-  not(M1/consistent[X])
+  // Execution is dead (so its litmus test is not racy)
   M1/dead[X]
+
+  // The execution is forbidden in C11
+  not(M1/consistent[X])
+}
+
+pred find_bug [X : Exec_C] {
+
+  // Execution is forbidden in software...
+  is_inconsistent[X]
 
   // ... but is nonetheless allowed by a well-formed schedule.
   wf_schedule[X]
-  allowed_schedule[X]
+  allowed_schedule[X] // new constraints
 
 }
 
-pred p2 [X : Exec_C] {
-
-  // We do not consider RMWs yet
-  no_RMWs[X]
-
-  // Assume sb is total within each thread
-  total_sb[X]
-
-  // Assume every event is in the same thread
-  (X.ev -> X.ev) in X.sthd
-
-  // The execution is dead and forbidden in software ...
-  not(M1/consistent[X])
-  M1/dead[X]
-
-  // ... but is nonetheless allowed by a well-formed schedule.
-  wf_schedule[X]
-  allowed_schedule_orig[X]
-
-}
+// Configuration options
+//-------------------------------
+// Solver = Glucose
+// Maximum stack = 65536k
+// Maximum memory = 4096MB
+// Use higher-order solver = YES
+                                              // Solve time (EE-Benjamin)
+//--------------------------------------------//-------------------------
+run find_bug for exactly 1 Exec, 2 E expect 0 // <1 second
+run find_bug for exactly 1 Exec, 3 E expect 0 // <1 second
+run find_bug for exactly 1 Exec, 4 E expect 0 // <1 second
+run find_bug for exactly 1 Exec, 5 E expect 0 // 3 seconds
+run find_bug for exactly 1 Exec, 6 E expect 0 // 96 seconds 
+run find_bug for exactly 1 Exec, 7 E expect 0 // 29 minutes
+run find_bug for exactly 1 Exec, 8 E expect 0 // 9 hours
+run find_bug for exactly 1 Exec, 9 E          // unknown (out of time)
 
 // NB:
 // 4 events are enough to find MP/LB/SB bugs that involve no fences
 // 5 events are needed to find MP/LB/SB bugs that involve one fence
 // 6 events are enough to find IRIW bugs that involve no fences
 
-run p for exactly 1 Exec, 2 E expect 0 
-// Glucose takes <1 second on EE-Benjamin
+pred find_bug_seq [X : Exec_C] {
 
-run p for exactly 1 Exec, 3 E expect 0 
-// Glucose takes <1 second on EE-Benjamin
+  // Assume every event is in the same thread
+  sq[X.ev] in X.sthd
 
-run p for exactly 1 Exec, 4 E expect 0 
-// Glucose takes <1 second on EE-Benjamin
+  // Execution is forbidden in software...
+  is_inconsistent[X]
 
-run p for exactly 1 Exec, 5 E expect 0
-// Glucose takes 3 seconds on EE-Benjamin
+  // ... but is nonetheless allowed by a well-formed schedule.
+  wf_schedule[X]
+  allowed_schedule_orig[X] // original LegUp constraints
 
-run p for exactly 1 Exec, 6 E expect 0 
-// Glucose takes 96 seconds on EE-Benjamin 
+}
 
-run p for exactly 1 Exec, 7 E expect 0 
-// Glucose takes 29 minutes on EE-Benjamin
+run find_bug_seq for exactly 1 Exec, 4 E expect 0
+run find_bug_seq for exactly 1 Exec, 5 E expect 0 
+run find_bug_seq for exactly 1 Exec, 6 E expect 0 
+run find_bug_seq for exactly 1 Exec, 7 E expect 0 
+run find_bug_seq for exactly 1 Exec, 8 E expect 0 
+run find_bug_seq for exactly 1 Exec, 9 E expect 0  
 
-run p for exactly 1 Exec, 8 E expect 0 
-// Glucose takes 9 hours on EE-Benjamin
-
-run p for exactly 1 Exec, 9 E
-
-run p2 for exactly 1 Exec, 4 E expect 0
-run p2 for exactly 1 Exec, 5 E expect 0 
-run p2 for exactly 1 Exec, 6 E expect 0 
-run p2 for exactly 1 Exec, 7 E expect 0 
-run p2 for exactly 1 Exec, 8 E expect 0 
-run p2 for exactly 1 Exec, 9 E expect 0  
-
-// Configuration options
-////////////////////////////////
-// Solver = Glucose
-// Maximum stack = 65536k
-// Maximum memory = 4096MB
-// Use higher-order solver = YES
 
